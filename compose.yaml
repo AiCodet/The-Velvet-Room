@@ -1,0 +1,12 @@
+services:
+  velvet-room:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to the final HTTPS website origin}
+    ports:
+      - "127.0.0.1:4173:8080"
+    volumes:
+      - velvet-data:/data
+volumes:
+  velvet-data:
