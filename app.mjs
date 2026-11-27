@@ -192,6 +192,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&menu){menu=false;sh
 dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&round?.spinning){if(performance.now()-round.startTime>=SPIN_DURATION)completeSpin();else animateWheel();}});
 matchMedia('(max-width:760px)').addEventListener('change',()=>{menu=false;shell();});
+setInterval(()=>{if(tab!=='tables'||currentGame().id!=='baccarat'||round?.phase!=='playing')return;const seconds=Math.max(0,Math.ceil(((round.deadline??Date.now())-Date.now())/1000)),clock=$('[data-baccarat-clock]');if(clock)clock.textContent=`${seconds}s`;if(seconds===0&&!round.timeoutSent&&!onlineBusy){round.timeoutSent=true;if(round.server)serverAction('answer',{answer:'timeout'});else answer('timeout');}},200);                      
 let currentSocialWeek=weekKey();const newAwards=settleWeeks(data.social);save();shell();if(storageError)toast('Saved data could not be read. A fresh local session is ready.');else if(newAwards.length)toast('New cosmetic title: '+newAwards.at(-1).title);setInterval(()=>{const next=weekKey();if(next!==currentSocialWeek){currentSocialWeek=next;const awards=settleWeeks(data.social);save();shell();if(awards.length)toast('Weekly cup reset. New title: '+awards.at(-1).title);}},60000);
 
 
