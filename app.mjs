@@ -66,7 +66,30 @@ function hit(){if(round?.server)return serverAction('hit',{});if(currentGame().i
 function stand(){if(round?.server)return serverAction('stand',{});if(currentGame().id!=='blackjack'||round?.phase!=='playing')return;while(total(round.dealer)<17)round.dealer.push(round.d.pop());finish(blackjackResult(round.player,round.dealer),`You: ${total(round.player)} · Dealer: ${total(round.dealer)}.`);}
 function describeHand(hand){const r=pokerRank(hand);return `${r.name} (${r.kickers.map(n=>face({r:n})).join(', ')})`;}
 function draw(){if(round?.server)return serverAction('draw',{held:round.held??[]});if(currentGame().id!=='poker'||round?.phase!=='playing')return;round.player=round.player.map((c,i)=>round.held.includes(i)?c:round.d.pop());round.dealer=aiDraw(round.dealer,round.d);const c=comparePoker(round.player,round.dealer);finish(c>0?'win':c===0?'draw':'loss',`You: ${describeHand(round.player)}. ${opponentLabel()}: ${describeHand(round.dealer)}.`);}
-function answer(a){if(round?.server)return serverAction('answer',{answer:a});if(currentGame().id!=='baccarat'||round?.phase!=='playing')return;const good=a===round.answer;finish(good?'win':'loss',`Player ${baccaratTotal(round.player)} · Banker ${baccaratTotal(round.banker)}. ${round.answer==='tie'?'It is a tie.':round.answer==='player'?'Player is higher.':'Banker is higher.'}`,good?'A sharp eye.':'Take another look.');}
+function answer(a){
+  if(round?.server)return serverAction('answer',{answer:a});
+  if(currentGame().id!=='baccarat'||round?.phase!=='playing')return;
+
+  const good=a!=='timeout'&&Date.now()<=round.deadline&&a===round.answer;
+  if(good)round.correct++;
+
+  if(round.handNumber<5){
+    Object.assign(round,baccaratDeal(round.d));
+    round.handNumber++;
+    round.deadline=Date.now()+10000;
+    round.timeoutSent=false;
+    round.message=`${good?'Correct':'Not quite'} · ${round.correct}/5 correct. Hand ${round.handNumber} of 5 · calculate within 10 seconds.`;
+    shell();
+    return;
+  }
+
+  const outcome=round.correct>=3?'win':'loss';
+  finish(
+    outcome,
+    `Challenge complete · ${round.correct}/5 correct. Final hand: Player ${baccaratTotal(round.player)} · Banker ${baccaratTotal(round.banker)}.`,
+    outcome==='win'?'Nine-Point Challenge won.':'Nine-Point Challenge missed.'
+  );
+}
 function animateWheel(){cancelAnimationFrame(spinFrame);function frame(t){if(!round?.spinning||tab!=='tables')return;const state=spinState(t-round.startTime,round.destination);round.angle=state.rotation;const wheel=$('.wheel'),countdown=$('[data-spin-countdown]');if(wheel&&!matchMedia('(prefers-reduced-motion: reduce)').matches)wheel.style.transform=`rotate(${round.angle}deg)`;if(countdown)countdown.textContent=state.remaining.toFixed(1)+'s';if(state.done){completeSpin();return;}spinFrame=requestAnimationFrame(frame);}spinFrame=requestAnimationFrame(frame);}
 function completeSpin(){if(round?.server)return serverAction('complete');if(!round?.spinning)return;round.angle=round.destination;data.rouletteHistory=[round.number,...data.rouletteHistory].slice(0,10);finish('exhibition',`The wheel stopped on ${round.number} · ${wheelColour(round.number)}. Participation award; MMR stays the same.`,`${round.number} · ${wheelColour(round.number)}`);}
 function changeGame(i){if(round?.phase==='playing'){showDialog('Switch tables?',`<p>Your free practice round is in progress. Leaving a server-ranked match records a loss. Local practice and unranked rounds can be left freely.</p><button class="btn gold" data-confirm-game="${i}">Switch to ${esc(games[i].name)}</button>`);return;}setGame(i);}
