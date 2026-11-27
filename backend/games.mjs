@@ -13,7 +13,7 @@ export function gameService(store,{now=()=>Date.now()}={}){
     demand(r.phase==='playing',409,'This round is already complete.');r.phase='done';r.spinning=false;r.outcome=outcome;r.message=message;r.title=title??(outcome==='win'?'You win.':outcome==='draw'?'Draw.':'Round lost.');r.resultLabel=title??r.title;
     Object.assign(r,store.record(userId,r.game,outcome,{resultId:r.id,opponent:r.opponentMMR}));
   }
-  function view(r){const copy=structuredClone(r);delete copy.d;delete copy.answer;copy.server=true;copy.elapsed=Math.max(0,now()-r.started);copy.flipRemainingif(r.game==='baccarat'&&r.phase==='playing')copy.remainingMs=Math.max(0,(r.deadline??now())-now());=Math.max(0,(r.flipUntil??0)-now());
+    function view(r){const copy=structuredClone(r);delete copy.d;delete copy.answer;copy.server=true;copy.elapsed=Math.max(0,now()-r.started);copy.flipRemaining=Math.max(0,(r.flipUntil??0)-now());if(r.game==='baccarat'&&r.phase==='playing')copy.remainingMs=Math.max(0,(r.deadline??now())-now());
     if(r.phase!=='done'){
       if(r.game==='blackjack')copy.dealer=r.dealer.slice(0,1).concat({r:0,s:''});
       if(r.game==='poker')copy.dealer=[];
