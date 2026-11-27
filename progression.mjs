@@ -19,10 +19,9 @@ export function rankForMMR(mmr) {
 }
 export function mmrChange(mmr, opponentMMR, outcome, ranked = true) {
   if (!ranked) return 0;
-  const score = {win:1,draw:.5,loss:0}[outcome];
-  if (score === undefined) throw new Error('Unknown match outcome');
-  const expected = 1 / (1 + 10 ** ((opponentMMR - mmr) / 400));
-  return Math.max(800, mmr + Math.round(16 * (score - expected))) - mmr;
+  const change = { win: 14, draw: 0, loss: -8 }[outcome];
+  if (change === undefined) throw new Error('Unknown match outcome');
+  return Math.max(800, mmr + change) - mmr;
 }
 export function migrateProgress(saved) {
   const mmr = saved.mmr ?? saved.rating;
