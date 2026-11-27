@@ -1,94 +1,46 @@
-import {deck,aiDraw,comparePoker} from './engine.mjs';
-export const PLAYER_ID='player:alex';
-export const playerProfile=mmr=>({id:PLAYER_ID,name:'Alex Morgan',type:'player',mmr});
-export function friendProfile(friend){return {id:'friend:'+friend.name.toLocaleLowerCase('en-GB'),name:friend.name,type:'friend',mmr:friend.mmr??({Oliver:1328,Scarlett:1384,Theo:1184}[friend.name]??1200)};}
-export function weekKey(now=Date.now()){
-  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now)).map(p=>[p.type,p.value]));
-  const day=new Date(Date.UTC(+parts.year,+parts.month-1,+parts.day));
-  day.setUTCDate(day.getUTCDate()-(day.getUTCDay()+6)%7);
-  return day.toISOString().slice(0,10);
-}
-export function nextWeek(key){const d=new Date(key+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+7);return d.toISOString().slice(0,10);}
-export const emptySocial=()=>({series:{},tournaments:{},active:null,rivalries:{},weeks:{},recorded:[],awards:[],equippedTitle:'Club member'});
-export function normaliseSocial(value){const s={...emptySocial(),...(value??{})};for(const t of Object.values(s.tournaments))for(const series of tournamentSeries(t))s.series[series.id]=series;return s;}
-export function pairKey(a,b){return JSON.stringify([a,b].sort());}
-export function rivalry(social,a,b){const r=social.rivalries[pairKey(a,b)];return r??{matches:0,wins:{[a]:0,[b]:0},draws:0,streakWinner:null,streak:0};}
-export function makeSeries(a,b,bestOf=3,extra={}){
-  if(![1,3,5].includes(bestOf)||a.id===b.id)throw Error('Choose distinct players and best-of-1, 3 or 5.');
-  return {id:crypto.randomUUID(),players:[{...a},{...b}],bestOf,target:Math.floor(bestOf/2)+1,score:{[a.id]:0,[b.id]:0},hands:[],status:'playing',winnerId:null,created:Date.now(),...extra};
-}
-export function applyHand(series,outcome,handId){
-  if(!['win','draw','loss'].includes(outcome))throw Error('Invalid hand outcome');
-  if(series.status==='complete'||series.hands.some(h=>h.id===handId))return false;
-  const winner=outcome==='draw'?null:series.players[outcome==='win'?0:1].id;
-  series.hands.push({id:handId,winner});
-  if(winner)series.score[winner]++;
-  if(winner&&series.score[winner]>=series.target){series.status='complete';series.winnerId=winner;}
-  return true;
-}
-export function simulateSeries(series,random){
-  for(let count=0;series.status!=='complete'&&count<200;count++){
-    const d=deck(random),a=aiDraw(d.splice(0,5),d),b=aiDraw(d.splice(0,5),d),result=comparePoker(a,b);
-    applyHand(series,result>0?'win':result<0?'loss':'draw',crypto.randomUUID());
-  }
-  if(series.status!=='complete')throw Error('The simulated match tied too often. Please start again.');
-  return series;
-}
-export function weeklyRows(social,profiles,key=weekKey()){
-  const scores=social.weeks[key]?.scores??{};
-  return profiles.map(p=>({...p,matches:0,wins:0,draws:0,points:0,...scores[p.id]})).sort((a,b)=>b.points-a.points||b.wins-a.wins||a.name.localeCompare(b.name));
-}
-export function recordSeries(social,series,now=Date.now()){
-  if(series.status!=='complete'||social.recorded.includes(series.id))return false;
-  social.recorded.push(series.id);
-  const [a,b]=series.players;
-  if(a.type!=='ai'&&b.type!=='ai'){
-    const key=pairKey(a.id,b.id),r=rivalry(social,a.id,b.id);
-    r.matches++;r.wins[series.winnerId]=(r.wins[series.winnerId]??0)+1;
-    if(r.streakWinner===series.winnerId)r.streak++;else{r.streakWinner=series.winnerId;r.streak=1;}
-    social.rivalries[key]=r;
-  }
-  const key=weekKey(now),week=social.weeks[key]??={scores:{},settled:false};
-  for(const p of series.players){
-    if(p.type==='ai')continue;
-    const score=week.scores[p.id]??={id:p.id,name:p.name,matches:0,wins:0,draws:0,points:0};
-    score.matches++;
-    if(p.id===series.winnerId){score.wins++;score.points+=3;}
-  }
-  return true;
-}
-export function settleWeeks(social,now=Date.now()){
-  const current=weekKey(now),awards=[];
-  for(const [key,week] of Object.entries(social.weeks)){
-    if(key>=current||week.settled)continue;
-    const rows=Object.values(week.scores).sort((a,b)=>b.points-a.points||b.wins-a.wins),me=week.scores[PLAYER_ID];
-    if(me?.matches){
-      const place=1+rows.filter(p=>p.points>me.points||(p.points===me.points&&p.wins>me.wins)).length;
-      const title=place===1?'Weekly Champion':place<=3?'Club Contender':'Good Company';
-      const award={id:'week:'+key,week:key,title,badge:place===1?'♛':place<=3?'✧':'✦',place};
-      if(!social.awards.some(a=>a.id===award.id)){social.awards.push(award);awards.push(award);}
+import {randomBytes} from 'node:crypto';
+import {deck,aiDraw,comparePoker,reward} from '../engine.mjs';
+import {weekKey} from '../social.mjs';
+import {demand,uid,publicUser} from './store.mjs';
+
+export function socialService(store){
+  const accepted=(a,b)=>!!store.get("SELECT 1 FROM friends WHERE status='accepted' AND ((sender=? AND recipient=?) OR (sender=? AND recipient=?))",a,b,b,a);
+  function friends(id){return store.all('SELECT * FROM friends WHERE sender=? OR recipient=? ORDER BY created DESC',id,id).map(r=>({id:r.id,status:r.status,incoming:r.recipient===id,user:publicUser(store.user(r.sender===id?r.recipient:r.sender))}));}
+  function requestFriend(id,username){demand(typeof username==='string',400,'Enter a username.');const other=store.get('SELECT * FROM users WHERE username=? COLLATE NOCASE',username);demand(other&&other.id!==id,404,'Choose another registered player’s username.');demand(!store.get('SELECT 1 FROM friends WHERE (sender=? AND recipient=?) OR (sender=? AND recipient=?)',id,other.id,other.id,id),409,'A friend connection or request already exists.');store.run('INSERT INTO friends VALUES(?,?,?,?,?)',uid(),id,other.id,'pending',Date.now());return friends(id);}
+  function answerFriend(id,requestId,accept){const f=store.get('SELECT * FROM friends WHERE id=?',requestId);demand(f&&f.recipient===id&&f.status==='pending',404,'Friend request not found.');if(accept)store.run("UPDATE friends SET status='accepted' WHERE id=?",requestId);else store.run('DELETE FROM friends WHERE id=?',requestId);return friends(id);}
+  function load(code,id){const row=store.get('SELECT * FROM rooms WHERE code=?',code);demand(row&&store.get('SELECT 1 FROM room_members WHERE code=? AND user_id=?',code,id),404,'Room not found or access denied.');return JSON.parse(row.state);}
+  function write(r){r.version++;store.run('UPDATE rooms SET state=?,owner=? WHERE code=?',JSON.stringify(r),r.owner,r.code);}
+  const seat=u=>({id:u.id,name:u.name,mmr:u.mmr,ai:false,ready:false});
+  function create(id,input){return store.tx(()=>{const name=String(input.name??'').trim();demand(name.length>=2&&name.length<=40,400,'Room names need 2–40 characters.');demand(['match','tournament'].includes(input.mode)&&[1,3,5].includes(input.bestOf),400,'Choose a valid room format.');demand(store.get('SELECT COUNT(*) n FROM room_members WHERE user_id=?',id).n<10,409,'Leave a room before creating more.');let code;do{code=randomBytes(4).toString('hex').toUpperCase();}while(store.get('SELECT 1 FROM rooms WHERE code=?',code));const r={code,name,mode:input.mode,bestOf:input.bestOf,owner:id,members:[seat(store.user(id))],status:'lobby',matches:[],version:0,created:Date.now()};store.run('INSERT INTO rooms VALUES(?,?,?,?)',code,id,JSON.stringify(r),Date.now());store.run('INSERT INTO room_members VALUES(?,?)',code,id);return view(r,id);});}
+  function join(id,code){return store.tx(()=>{demand(typeof code==='string'&&/^[A-F0-9]{8}$/.test(code),400,'Enter an eight-character room code.');const row=store.get('SELECT state FROM rooms WHERE code=?',code);demand(row,404,'Room not found.');const r=JSON.parse(row.state);if(r.members.some(p=>p.id===id))return view(r,id);demand(r.status==='lobby',409,'This room has already started.');demand(r.members.length<(r.mode==='match'?2:4),409,'This room is full.');demand(store.get('SELECT COUNT(*) n FROM room_members WHERE user_id=?',id).n<10,409,'Leave a room before joining more.');r.members.push(seat(store.user(id)));store.run('INSERT INTO room_members VALUES(?,?)',code,id);store.run('DELETE FROM invites WHERE code=? AND recipient=?',code,id);write(r);return view(r,id);});}
+  function newSeries(a,b,bestOf,stage){const s={id:uid(),players:[{...a},{...b}],bestOf,target:Math.floor(bestOf/2)+1,score:{[a.id]:0,[b.id]:0},earned:{[a.id]:0,[b.id]:0},status:'playing',winner:null,stage,hands:0};deal(s);return s;}
+  function deal(s){const d=deck();s.hands++;s.hand={number:s.hands,d,cards:Object.fromEntries(s.players.map(p=>[p.id,Array.from({length:5},()=>d.pop())])),submitted:{},ready:{},revealed:false};for(const p of s.players)if(p.ai){s.hand.cards[p.id]=aiDraw(s.hand.cards[p.id],d);s.hand.submitted[p.id]=true;s.hand.ready[p.id]=true;}}
+  function resolve(s){const [a,b]=s.players,h=s.hand;if(h.revealed||!h.submitted[a.id]||!h.submitted[b.id])return;h.revealed=true;const c=comparePoker(h.cards[a.id],h.cards[b.id]);h.winner=c>0?a.id:c<0?b.id:null;if(h.winner)s.score[h.winner]++;
+    for(const p of s.players){const result=h.winner===null?'draw':h.winner===p.id?'win':'loss',earned=reward(result).points;s.earned[p.id]+=earned;if(!p.ai)store.run('UPDATE users SET points=points+?,played=played+1 WHERE id=?',earned,p.id);}
+    if(h.winner&&s.score[h.winner]>=s.target){s.status='complete';s.winner=h.winner;settleSeries(s);
     }
-    week.settled=true;
   }
-  return awards;
-}
-export function makeTournament(players,bestOf=3,roomCode=''){
-  if(players.length!==4||players[0].id!==PLAYER_ID||![3,5].includes(bestOf)||new Set(players.map(p=>p.id)).size!==4)throw Error('A tournament needs four distinct seats, including you, and best-of-3 or 5.');
-  const id=crypto.randomUUID();
-  return {id,roomCode,bestOf,players:players.map(p=>({...p})),status:'playing',championId:null,
-    semiA:makeSeries(players[0],players[1],bestOf,{tournamentId:id,stage:'Semifinal 1'}),
-    semiB:makeSeries(players[2],players[3],bestOf,{tournamentId:id,stage:'Semifinal 2'}),final:null};
-}
-export function advanceTournament(tournament,simulate=simulateSeries){
-  if(tournament.status==='complete')return null;
-  if(tournament.semiB.status!=='complete')simulate(tournament.semiB);
-  if(tournament.semiA.status!=='complete')return tournament.semiA;
-  if(!tournament.final){
-    const a=tournament.players.find(p=>p.id===tournament.semiA.winnerId),b=tournament.players.find(p=>p.id===tournament.semiB.winnerId);
-    tournament.final=makeSeries(a,b,tournament.bestOf,{tournamentId:tournament.id,stage:'Final'});
+  function settleSeries(s){const [a,b]=s.players;s.settlements={};for(const p of s.players)if(!p.ai){const opp=s.players.find(x=>x.id!==p.id);s.settlements[p.id]=store.record(p.id,'poker',p.id===s.winner?'win':'loss',{resultId:s.id,kind:'series',opponent:opp.mmr,points:s.earned[p.id],pointsAlreadyEarned:true,label:`Best of ${s.bestOf} vs ${opp.name}`});}
+      if(!a.ai&&!b.ai){const pair=JSON.stringify([a.id,b.id].sort()),row=store.get('SELECT state FROM rivalries WHERE pair=?',pair),r=row?JSON.parse(row.state):{matches:0,wins:{[a.id]:0,[b.id]:0},streak:0,streakWinner:null};r.matches++;r.wins[s.winner]++;r.streak=r.streakWinner===s.winner?r.streak+1:1;r.streakWinner=s.winner;store.run('INSERT INTO rivalries VALUES(?,?) ON CONFLICT(pair) DO UPDATE SET state=excluded.state',pair,JSON.stringify(r));}
   }
-  if(!tournament.final.players.some(p=>p.id===PLAYER_ID)&&tournament.final.status!=='complete')simulate(tournament.final);
-  if(tournament.final.status==='complete'){tournament.status='complete';tournament.championId=tournament.final.winnerId;return null;}
-  return tournament.final;
+  function simulateAI(s){let guard=0;while(s.status==='playing'&&s.players.every(p=>p.ai)&&guard++<200){resolve(s);if(s.status==='playing')deal(s);}demand(guard<200,503,'The AI match could not finish. Try again.');}
+  function advance(r){for(const s of r.matches)simulateAI(s);if(r.mode==='match'){if(r.matches[0]?.status==='complete'){r.status='complete';r.champion=r.matches[0].winner;}return;}
+    const semis=r.matches.filter(s=>s.stage==='semifinal');if(semis.length===2&&semis.every(s=>s.status==='complete')&&!r.matches.some(s=>s.stage==='final')){const winners=semis.map(s=>s.players.find(p=>p.id===s.winner));r.matches.push(newSeries(winners[0],winners[1],r.bestOf,'final'));simulateAI(r.matches.at(-1));}
+    const final=r.matches.find(s=>s.stage==='final');if(final?.status==='complete'){r.status='complete';r.champion=final.winner;}}
+  function view(r,id){return {...r,matches:r.matches.map(s=>{const h=s.hand,participant=s.players.some(p=>p.id===id);return {id:s.id,players:s.players,bestOf:s.bestOf,target:s.target,score:s.score,status:s.status,winner:s.winner,stage:s.stage,earned:s.earned,settlement:s.settlements?.[id],hand:{number:h.number,revealed:h.revealed,winner:h.winner,submitted:h.submitted,ready:h.ready,cards:Object.fromEntries(s.players.map(p=>[p.id,h.revealed||participant&&p.id===id?h.cards[p.id]:[]]))}};})};}
+  function act(id,code,input){return store.tx(()=>{const r=load(code,id);demand(typeof input.requestId==='string'&&/^[a-f0-9-]{36}$/i.test(input.requestId),400,'An action ID is required.');if(store.get('SELECT 1 FROM room_actions WHERE code=? AND user_id=? AND request_id=?',code,id,input.requestId))return view(r,id);
+    const me=r.members.find(p=>p.id===id),t=input.type;
+    if(t==='ready'){demand(r.status==='lobby',409,'The room has already started.');me.ready=!me.ready;}
+    else if(t==='add-ai'){demand(r.owner===id&&r.status==='lobby',403,'Only the host can fill open seats.');demand(r.members.length<(r.mode==='match'?2:4),409,'Room is full.');const names=['Iris AI','Felix AI','Milo AI'];r.members.push({id:'ai:'+uid(),name:names.find(n=>!r.members.some(p=>p.name===n)),mmr:1250,ai:true,ready:true});}
+    else if(t==='start'){demand(r.owner===id&&r.status==='lobby',403,'Only the host can start this room.');demand(r.members.filter(p=>!p.ai).every(p=>p.ready),409,'All players must be ready.');const capacity=r.mode==='match'?2:4;while(r.members.length<capacity){r.members.push({id:'ai:'+uid(),name:['Iris AI','Felix AI','Milo AI'].find(n=>!r.members.some(p=>p.name===n)),mmr:1250,ai:true,ready:true});}r.members=r.members.map(p=>p.ai?p:{...p,mmr:store.user(p.id).mmr,name:store.user(p.id).name});r.status='playing';r.matches=r.mode==='match'?[newSeries(r.members[0],r.members[1],r.bestOf,'match')]:[newSeries(r.members[0],r.members[1],r.bestOf,'semifinal'),newSeries(r.members[2],r.members[3],r.bestOf,'semifinal')];advance(r);}
+    else if(t==='forfeit'){demand(r.status==='playing',409,'This competition has ended.');const s=r.matches.find(s=>s.id===input.matchId&&s.status==='playing'&&s.players.some(p=>p.id===id));demand(s,403,'This active match is not yours.');s.status='complete';s.winner=s.players.find(p=>p.id!==id).id;s.score[s.winner]=s.target;s.forfeitBy=id;s.hand.revealed=true;s.hand.winner=s.winner;settleSeries(s);advance(r);}
+    else if(['draw','next-hand'].includes(t)){demand(r.status==='playing',409,'The room is not playing.');const s=r.matches.find(s=>s.id===input.matchId);demand(s&&s.status==='playing'&&s.players.some(p=>p.id===id),403,'This match is not yours.');demand(input.hand===s.hand.number,409,'A new hand has started. Refresh the room.');const h=s.hand;
+      if(t==='draw'){demand(!h.submitted[id]&&!h.revealed,409,'Your draw is already submitted.');demand(Array.isArray(input.held)&&input.held.length<=5&&new Set(input.held).size===input.held.length&&input.held.every(i=>Number.isInteger(i)&&i>=0&&i<5),400,'Invalid held cards.');h.cards[id]=h.cards[id].map((c,i)=>input.held.includes(i)?c:h.d.pop());h.submitted[id]=true;resolve(s);advance(r);}
+      else{demand(h.revealed,409,'Wait for both draws.');h.ready[id]=true;if(s.players.every(p=>h.ready[p.id]))deal(s);}
+    }else demand(false,400,'Unknown room action.');write(r);store.run('INSERT INTO room_actions VALUES(?,?,?)',code,id,input.requestId);return view(r,id);
+  });}
+  function leave(id,code){return store.tx(()=>{const r=load(code,id);demand(r.status!=='playing',409,'Finish this competition before leaving.');r.members=r.members.filter(p=>p.id!==id);store.run('DELETE FROM room_members WHERE code=? AND user_id=?',code,id);const humans=r.members.filter(p=>!p.ai);if(!humans.length)store.run('DELETE FROM rooms WHERE code=?',code);else{if(r.owner===id)r.owner=humans[0].id;write(r);}return {left:true};});}
+  function invite(id,code,to){const r=load(code,id);demand(r.status==='lobby',409,'Invite players before the room starts.');demand(accepted(id,to),403,'Invite an accepted friend.');store.run('INSERT OR IGNORE INTO invites VALUES(?,?,?,?,?)',uid(),code,id,to,Date.now());return {invited:true};}
+  function hub(id){store.settleCosmetics(id);const f=friends(id),ids=new Set([id,...f.filter(f=>f.status==='accepted').map(f=>f.user.id)]),key=weekKey();const cup=store.all('SELECT w.*,u.name FROM weekly w JOIN users u ON u.id=w.user_id WHERE week=? ORDER BY points DESC,wins DESC',key).filter(p=>ids.has(p.user_id));return {friends:f,rooms:store.all('SELECT r.code,r.state FROM rooms r JOIN room_members m ON r.code=m.code WHERE m.user_id=? ORDER BY r.created DESC',id).map(r=>{const v=JSON.parse(r.state);return {code:r.code,name:v.name,status:v.status,mode:v.mode,seats:v.members.length};}),invites:store.all('SELECT i.id,i.code,u.name sender,r.state FROM invites i JOIN users u ON u.id=i.sender JOIN rooms r ON r.code=i.code WHERE i.recipient=?',id).map(i=>({id:i.id,code:i.code,sender:i.sender,name:JSON.parse(i.state).name})),rivalries:f.filter(f=>f.status==='accepted').map(f=>{const row=store.get('SELECT state FROM rivalries WHERE pair=?',JSON.stringify([id,f.user.id].sort()));return {user:f.user,...(row?JSON.parse(row.state):{matches:0,wins:{},streak:0,streakWinner:null})};}),week:key,cup,profile:store.profile(id)};}
+  return {friends,requestFriend,answerFriend,create,join,load,view,act,leave,invite,hub};
 }
-export function tournamentSeries(t){return [t.semiA,t.semiB,t.final].filter(Boolean);}
