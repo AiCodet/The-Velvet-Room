@@ -34,7 +34,17 @@ export function gameService(store,{now=()=>Date.now()}={}){
     if(pending){const old=JSON.parse(pending.state);if(old.ranked)finish(old,id,'loss','An unfinished ranked match was left.','Match forfeited.');else{old.phase='abandoned';old.spinning=false;}write(old,id);}
     const r={id:requestId,game:gameId,version:0,started:now(),phase:'playing',ranked:g.mode==='ranked',opponentMMR:g.benchmark,message:g.sub,d:deck()};
     if(gameId==='blackjack'){r.player=[r.d.pop(),r.d.pop()];r.dealer=[r.d.pop(),r.d.pop()];r.message=`You have ${total(r.player)}. Hit or stand?`;if(total(r.player)===21||total(r.dealer)===21)finish(r,id,blackjackResult(r.player,r.dealer),'A natural 21 ends the round.');}
-    if(gameId==='baccarat'){const b=baccaratDeal(r.d);r.player=b.player;r.banker=b.banker;r.dealer=b.banker;r.answer=b.answer;r.message='Cards are revealed. Choose the higher hand or a tie.';}
+    if(gameId==='baccarat'){
+  const b=baccaratDeal(r.d);
+  r.player=b.player;
+  r.banker=b.banker;
+  r.dealer=b.banker;
+  r.answer=b.answer;
+  r.handNumber=1;
+  r.correct=0;
+  r.deadline=now()+10000;
+  r.message='Hand 1 of 5 · Calculate both totals and choose within 10 seconds.';
+}
     if(gameId==='poker'){r.player=Array.from({length:5},()=>r.d.pop());r.dealer=Array.from({length:5},()=>r.d.pop());r.held=[];r.message='Choose cards to hold, then draw once.';}
     if(gameId==='mines'){r.board=newMinefield();r.puzzle=true;r.message='Clear 20 safe cells. The first opening is safe.';}
     if(gameId==='roulette'){const index=Math.floor(secureRandom()*37);r.number=WHEEL_ORDER[index];r.destination=spinDestination(index);r.spinning=true;r.angle=0;r.message='The wheel stops automatically after five seconds. +10 club points, 0 MMR.';}
