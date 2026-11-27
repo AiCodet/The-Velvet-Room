@@ -60,8 +60,32 @@ export function gameService(store,{now=()=>Date.now()}={}){
     else if(r.game==='blackjack'&&['hit','stand'].includes(t)){
       valid=true;if(t==='hit'){r.player.push(r.d.pop());if(total(r.player)>21)finish(r,id,'loss',`Your ${total(r.player)} is over 21.`);else if(total(r.player)===21)input={...input,type:'stand'};else r.message=`You have ${total(r.player)}. Hit or stand?`;}
       if(input.type==='stand'&&r.phase==='playing'){while(total(r.dealer)<17)r.dealer.push(r.d.pop());finish(r,id,blackjackResult(r.player,r.dealer),`You: ${total(r.player)} · Dealer: ${total(r.dealer)}.`);}
-    }else if(r.game==='baccarat'&&t==='answer'){
-      demand(['player','banker','tie'].includes(input.answer),400,'Choose Player, Banker or Tie.');valid=true;const win=input.answer===r.answer;finish(r,id,win?'win':'loss',`Player ${baccaratTotal(r.player)} · Banker ${baccaratTotal(r.banker)}. ${r.answer==='tie'?'The hands tie.':r.answer+' is higher.'}`,win?'Correct comparison.':'Comparison missed.');
+   }else if(r.game==='baccarat'&&t==='answer'){
+  demand(['player','banker','tie','timeout'].includes(input.answer),400,'Choose Player, Banker or Tie.');
+  valid=true;
+
+  const good=input.answer!=='timeout'&&now()<=r.deadline&&input.answer===r.answer;
+  if(good)r.correct++;
+
+  if(r.handNumber<5){
+    r.handNumber++;
+    const hand=baccaratDeal(r.d);
+    r.player=hand.player;
+    r.banker=hand.banker;
+    r.dealer=hand.banker;
+    r.answer=hand.answer;
+    r.deadline=now()+10000;
+    r.message=`${good?'Correct':'Not quite'} · ${r.correct}/5 correct. Hand ${r.handNumber} of 5 · calculate within 10 seconds.`;
+  }else{
+    const outcome=r.correct>=3?'win':'loss';
+    finish(
+      r,
+      id,
+      outcome,
+      `Challenge complete · ${r.correct}/5 correct. Final hand: Player ${baccaratTotal(r.player)} · Banker ${baccaratTotal(r.banker)}.`,
+      outcome==='win'?'Nine-Point Challenge won.':'Nine-Point Challenge missed.'
+    );
+  }
     }else if(r.game==='poker'&&t==='draw'){
       demand(Array.isArray(input.held)&&input.held.length<=5&&new Set(input.held).size===input.held.length&&input.held.every(i=>Number.isInteger(i)&&i>=0&&i<5),400,'Invalid held cards.');valid=true;r.held=input.held;r.player=r.player.map((c,i)=>r.held.includes(i)?c:r.d.pop());r.dealer=aiDraw(r.dealer,r.d);const result=comparePoker(r.player,r.dealer);finish(r,id,result>0?'win':result<0?'loss':'draw',`Your hand: ${pokerRank(r.player).name}. AI hand: ${pokerRank(r.dealer).name}.`);
     }else if(r.game==='mines'&&['reveal','flag'].includes(t)){
